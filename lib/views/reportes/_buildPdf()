@@ -1,0 +1,35 @@
+import 'dart:typed_data';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:intl/intl.dart';
+import '../../../models/reporte_models.dart';
+import '../../../providers/reporte_provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+Future<Uint8List> _buildPdf(WidgetRef ref, ReporteFiltros f) async {
+  final doc = pw.Document();
+  final resumen = await ref.read(reporteServiceProvider).resumen(
+    desde: f.desde, hasta: f.hasta, group: f.group, usuarioId: f.usuarioId);
+  final fmt = NumberFormat.currency(symbol: '\$');
+
+  doc.addPage(pw.MultiPage(
+    build: (ctx) => [
+      pw.Header(level: 0, text: 'Chilascas — Reporte ${f.group.toUpperCase()}'),
+      pw.Text('Rango: ${DateFormat('yyyy-MM-dd').format(f.desde)} → ${DateFormat('yyyy-MM-dd').format(f.hasta)}'),
+      pw.SizedBox(height: 12),
+      pw.Table.fromTextArray(
+        headers: ['Periodo','Ventas','#Tickets','Descuentos','Cambio','Prod. Vendidos'],
+        data: resumen.map((r)=>[
+          DateFormat('yyyy-MM-dd').format(r.periodo),
+          fmt.format(r.totalVentas),
+          r.numeroVentas,
+          fmt.format(r.totalDescuentos),
+          fmt.format(r.totalCambio),
+          r.productosVendidos
+        ]).toList(),
+        headerDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
+        cellAlignment: pw.Alignment.centerLeft,
+      ),
+    ],
+  ));
+  return doc.save();
+}

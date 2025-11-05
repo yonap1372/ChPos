@@ -8,6 +8,7 @@ void main() async {
 
   await Supabase.initialize(
 
+  );
 
   runApp(
     const ProviderScope(

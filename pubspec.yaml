@@ -39,6 +39,10 @@ dependencies:
   cupertino_icons: ^1.0.8
   shared_preferences: ^2.5.3
   flutter_launcher_icons: ^0.14.4
+  fl_chart: ^0.69.0
+  intl: ^0.19.0
+  csv: ^6.0.0
+  printing: ^5.13.4
 
 dev_dependencies:
   flutter_test:
@@ -74,7 +78,7 @@ flutter:
     - assets/chilas.jpg
   # To add assets to your application, add an assets section, like this:
    #assets:
-    # - assets/las_chilascas_logo.png
+    - assets/las_chilascas_logo.png
   #   - images/a_dot_ham.jpeg
 
   # An image asset can refer to one or more resolution-specific "variants", see
