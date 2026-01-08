@@ -30,13 +30,11 @@ class _CajaViewState extends State<CajaView> {
 
   DateTime get _nowLocal => DateTime.now();
 
-  DateTime get _fromLocalMidnight =>
-      DateTime(_nowLocal.year, _nowLocal.month, _nowLocal.day)
-          .subtract(Duration(days: _rangeDays - 1));
+  DateTime get _fromLocalMidnight => DateTime(_nowLocal.year, _nowLocal.month, _nowLocal.day)
+      .subtract(Duration(days: _rangeDays - 1));
 
   DateTime get _toLocalExclusive =>
-      DateTime(_nowLocal.year, _nowLocal.month, _nowLocal.day)
-          .add(const Duration(days: 1));
+      DateTime(_nowLocal.year, _nowLocal.month, _nowLocal.day).add(const Duration(days: 1));
 
   String get _fromIsoUtc => _fromLocalMidnight.toUtc().toIso8601String();
   String get _toIsoUtc => _toLocalExclusive.toUtc().toIso8601String();
@@ -114,11 +112,6 @@ class _CajaViewState extends State<CajaView> {
     return '${days}d ${hh}h';
   }
 
-  void _snack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-  }
-
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -138,8 +131,7 @@ class _CajaViewState extends State<CajaView> {
 
       PostgrestFilterBuilder<List<Map<String, dynamic>>> q = _client
           .from('sesiones_caja')
-          .select(
-              'id, auth_id, usuario_id, fecha_apertura, fecha_cierre, monto_inicial, monto_final, estado')
+          .select('id, auth_id, usuario_id, fecha_apertura, fecha_cierre, monto_inicial, monto_final, estado')
           .gte('fecha_apertura', _fromIsoUtc)
           .lt('fecha_apertura', _toIsoUtc);
 
@@ -154,7 +146,6 @@ class _CajaViewState extends State<CajaView> {
       }
 
       final res = await q.order('fecha_apertura', ascending: false).limit(200);
-
       final list = List<Map<String, dynamic>>.from(res);
 
       Map<String, dynamic>? openSesion;
@@ -174,8 +165,7 @@ class _CajaViewState extends State<CajaView> {
       for (final s in list) {
         final mi = _toNum(s['monto_inicial']);
         final mfRaw = s['monto_final'];
-        final mfNum =
-            (mfRaw is num) ? mfRaw : (mfRaw == null ? null : num.tryParse(mfRaw.toString()));
+        final mfNum = (mfRaw is num) ? mfRaw : (mfRaw == null ? null : num.tryParse(mfRaw.toString()));
 
         sumIni += mi;
         if (mfNum != null) {
@@ -212,138 +202,6 @@ class _CajaViewState extends State<CajaView> {
         _error = e.toString();
         _loading = false;
       });
-    }
-  }
-
-  Future<num?> _askMonto(String title, {String? helper}) async {
-    final controller = TextEditingController();
-    final res = await showDialog<num>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(title),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (helper != null && helper.trim().isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(helper, style: Theme.of(context).textTheme.bodySmall),
-                  ),
-                ),
-              TextField(
-                controller: controller,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  hintText: '0.00',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
-            ElevatedButton(
-              onPressed: () {
-                final raw = controller.text.trim().replaceAll(',', '.');
-                final v = num.tryParse(raw);
-                if (v == null) return;
-                Navigator.pop(context, v);
-              },
-              child: const Text('Aceptar'),
-            ),
-          ],
-        );
-      },
-    );
-    return res;
-  }
-
-  Future<bool> _confirm(String title, String msg) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: Text(title),
-          content: Text(msg),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-            ElevatedButton(onPressed: () => Navigator.pop(context, true), child: const Text('Continuar')),
-          ],
-        );
-      },
-    );
-    return ok == true;
-  }
-
-  Future<void> _abrirCaja() async {
-    final user = _client.auth.currentUser;
-    if (user == null) return;
-
-    try {
-      final openCheck = await _client
-          .from('sesiones_caja')
-          .select('id, fecha_apertura, fecha_cierre, estado, auth_id')
-          .eq('auth_id', user.id)
-          .eq('estado', 'abierta')
-          .order('fecha_apertura', ascending: false)
-          .limit(1);
-
-      final openList = List<Map<String, dynamic>>.from(openCheck);
-      if (openList.isNotEmpty) {
-        final s = openList.first;
-        final fa = (s['fecha_apertura'] ?? '').toString();
-        _snack('Ya tienes una caja abierta desde ${fa.isEmpty ? '-' : _shortDate(fa)}');
-        await _load();
-        return;
-      }
-
-      final monto = await _askMonto('Monto inicial');
-      if (monto == null) return;
-
-      final ok = await _confirm('Abrir caja', '¿Confirmas abrir la caja con monto inicial ${_money(monto)}?');
-      if (!ok) return;
-
-      await _client.from('sesiones_caja').insert({
-        'auth_id': user.id,
-        'usuario_id': user.id,
-        'monto_inicial': monto,
-        'estado': 'abierta',
-      });
-
-      await _load();
-      _snack('Caja abierta');
-    } catch (e) {
-      _snack('Error: $e');
-    }
-  }
-
-  Future<void> _cerrarCaja() async {
-    final s = _openSesion;
-    if (s == null) return;
-
-    final id = s['id'].toString();
-    final mi = _toNum(s['monto_inicial']);
-
-    final montoFinal = await _askMonto('Monto final', helper: 'Monto inicial: ${_money(mi)}');
-    if (montoFinal == null) return;
-
-    final ok = await _confirm('Cerrar caja', '¿Confirmas cerrar la caja con monto final ${_money(montoFinal)}?');
-    if (!ok) return;
-
-    try {
-      await _client.from('sesiones_caja').update({
-        'monto_final': montoFinal,
-        'fecha_cierre': DateTime.now().toUtc().toIso8601String(),
-        'estado': 'cerrada',
-      }).eq('id', id);
-
-      await _load();
-      _snack('Caja cerrada');
-    } catch (e) {
-      _snack('Error: $e');
     }
   }
 
@@ -455,26 +313,6 @@ class _CajaViewState extends State<CajaView> {
                                 Text('Apertura: ${_shortDate((_openSesion?['fecha_apertura'] ?? '').toString())}'),
                                 Text('Monto inicial: ${_money(_toNum(_openSesion?['monto_inicial']))}'),
                               ],
-                              const SizedBox(height: 12),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: abierta ? null : _abrirCaja,
-                                      icon: const Icon(Icons.lock_open),
-                                      label: const Text('Abrir caja'),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: ElevatedButton.icon(
-                                      onPressed: abierta ? _cerrarCaja : null,
-                                      icon: const Icon(Icons.lock),
-                                      label: const Text('Cerrar caja'),
-                                    ),
-                                  ),
-                                ],
-                              ),
                             ],
                           ),
                         ),
@@ -640,10 +478,7 @@ class _StatChip extends StatelessWidget {
                     const SizedBox(height: 6),
                     Text(
                       value,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
