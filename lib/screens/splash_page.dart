@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'login_page.dart';
+import '../views/auth/login_page.dart';
 import 'home_page.dart';
 
 class SplashPage extends StatefulWidget {

@@ -1,7 +1,7 @@
 // ignore_for_file: use_build_context_synchronously, deprecated_member_use
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../services/impresora_service.dart';
+import '../../services/impresora_service.dart';
 
 class RealizarVentaView extends StatefulWidget {
   const RealizarVentaView({super.key});
@@ -25,11 +25,11 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
   double total = 0;
   bool cargando = false;
 
-  int? ventaMesaId;
+  String? ventaMesaId;
   String? nombreMesaActual;
   List<Map<String, dynamic>> mesasAbiertas = [];
 
-  static const _bases = ['Sencillo', 'Con proteína', 'Especialidad', 'Vegetariano'];
+  static const _bases = ['Sencillo', 'Con proteína', 'Especialidad', 'Vegetariano', 'Torta de Chilaquiles'];
   static const _salsas = ['Verde', 'Roja', 'Mole', 'Salsa crema Chipotle', 'Sin salsa'];
   static const _proteinas = ['Pollo', 'Huevo', 'Carnitas', 'Sin proteína'];
   static const _especialidades = ['Arrachera', 'Chicharrón prensado'];
@@ -40,6 +40,7 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     'Con proteína': 160,
     'Especialidad': 195,
     'Vegetariano': 160,
+    'Torta de Chilaquiles': 160,
   };
 
   static const Map<String, double> _preciosExtras = {
@@ -55,78 +56,123 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
   static const Map<String, double> _recargoProteina = {
     'Pollo': 0,
     'Huevo': 0,
-    'Carnitas': 5,
+    'Carnitas': 0,
     'Sin proteína': 0,
   };
 
   static const double _precioRefresco = 30.0;
   static const double _descuentoPorcentajeFijo = 15.0;
 
+  SupabaseClient get _sb => Supabase.instance.client;
+
   @override
   void initState() {
     super.initState();
-    toppingsSeleccionados.addAll(_toppings);
+    toppingsSeleccionados
+      ..clear()
+      ..addAll(_toppings);
     verificarCaja();
   }
 
+  String? _asString(dynamic v) {
+    if (v == null) return null;
+    return v.toString();
+  }
+
+  double _asDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0.0;
+  }
+
+  double _round2(double v) => (v * 100).roundToDouble() / 100;
+
   Future<void> verificarCaja() async {
     setState(() => cargando = true);
-    final userId = Supabase.instance.client.auth.currentUser?.id;
-    if (userId == null) {
+    try {
+      final userId = _sb.auth.currentUser?.id;
+      if (userId == null) {
+        setState(() => cargando = false);
+        return;
+      }
+
+      final resp = await _sb
+          .from('sesiones_caja')
+          .select()
+          .eq('auth_id', userId)
+          .eq('estado', 'abierta')
+          .maybeSingle();
+
+      if (!mounted) return;
+      setState(() {
+        cajaAbierta = resp == null ? null : Map<String, dynamic>.from(resp);
+        cargando = false;
+      });
+
+      if (cajaAbierta != null) {
+        await _cargarMesasAbiertas();
+      }
+    } catch (e) {
+      if (!mounted) return;
       setState(() => cargando = false);
-      return;
-    }
-
-    final resp = await Supabase.instance.client
-        .from('sesiones_caja')
-        .select()
-        .eq('auth_id', userId)
-        .eq('estado', 'abierta')
-        .maybeSingle();
-
-    setState(() {
-      cajaAbierta = resp;
-      cargando = false;
-    });
-
-    if (cajaAbierta != null) {
-      await _cargarMesasAbiertas();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error verificando caja: $e')),
+      );
     }
   }
 
   Future<void> abrirCaja(double monto) async {
-    final userId = Supabase.instance.client.auth.currentUser?.id;
-    if (userId == null) return;
+    try {
+      final userId = _sb.auth.currentUser?.id;
+      if (userId == null) return;
 
-    await Supabase.instance.client.from('sesiones_caja').insert({
-      'auth_id': userId,
-      'monto_inicial': monto,
-      'estado': 'abierta',
-      'fecha_apertura': DateTime.now().toIso8601String(),
-    });
+      await _sb.from('sesiones_caja').insert({
+        'auth_id': userId,
+        'monto_inicial': _round2(monto),
+        'estado': 'abierta',
+        'fecha_apertura': DateTime.now().toIso8601String(),
+      });
 
-    await verificarCaja();
+      await verificarCaja();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error abriendo caja: $e')),
+      );
+    }
   }
-
 
   Future<void> _cargarMesasAbiertas() async {
     if (cajaAbierta == null) return;
-    final sesionId = cajaAbierta!['id'];
-    final ventas = await Supabase.instance.client
-        .from('ventas')
-        .select('id, mesa, total, estado, descuento_percent, created_at')
-        .eq('sesion_caja_id', sesionId)
-        .eq('estado', 'abierta')
-        .order('created_at');
+    try {
+      final sesionId = _asString(cajaAbierta!['id']);
+      if (sesionId == null) return;
 
-    setState(() {
-      mesasAbiertas = List<Map<String, dynamic>>.from(ventas);
-    });
+      final ventas = await _sb
+          .from('ventas')
+          .select('id, mesa, mesa_nombre, cliente_nombre, total, estado, descuento_percent, created_at')
+          .eq('sesion_caja_id', sesionId)
+          .eq('estado', 'abierta')
+          .order('created_at');
+
+      if (!mounted) return;
+      setState(() {
+        mesasAbiertas = List<Map<String, dynamic>>.from(
+          (ventas as List).map((e) => Map<String, dynamic>.from(e as Map)),
+        );
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error cargando mesas: $e')),
+      );
+    }
   }
 
   Future<void> _crearOModificarMesaDialog() async {
     final ctrl = TextEditingController(text: nombreMesaActual ?? '');
     final formKey = GlobalKey<FormState>();
+
     final result = await showDialog<_MesaAccion>(
       context: context,
       builder: (_) => AlertDialog(
@@ -138,9 +184,7 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
             decoration: const InputDecoration(
               labelText: 'Nombre/No. de mesa (ej. Mesa 1)',
             ),
-            validator: (v) => (v == null || v.trim().isEmpty)
-                ? 'Ingresa un nombre de mesa'
-                : null,
+            validator: (v) => (v == null || v.trim().isEmpty) ? 'Ingresa un nombre de mesa' : null,
           ),
         ),
         actions: [
@@ -172,65 +216,76 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     }
     if (cajaAbierta == null) return;
 
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user == null) return;
+    try {
+      final user = _sb.auth.currentUser;
+      if (user == null) return;
 
-    final sesionId = cajaAbierta!['id'];
+      final sesionId = _asString(cajaAbierta!['id']);
+      if (sesionId == null) return;
 
-    dynamic venta;
-    if (ventaMesaId == null) {
-      venta = await Supabase.instance.client.from('ventas').insert({
-        'auth_id': user.id,
-        'sesion_caja_id': sesionId,
-        'mesa': mesaNombre,
-        'estado': 'abierta',
-        'fecha': DateTime.now().toIso8601String(),
-        'total': total,
-      }).select().single();
+      final subtotal = _round2(total);
 
-      ventaMesaId = venta['id'] as int;
-      nombreMesaActual = mesaNombre;
-    } else {
-      await Supabase.instance.client
-          .from('detalle_ventas')
-          .delete()
-          .eq('venta_id', ventaMesaId!);
+      if (ventaMesaId == null) {
+        final venta = await _sb.from('ventas').insert({
+          'auth_id': user.id,
+          'sesion_caja_id': sesionId,
+          'mesa': mesaNombre,
+          'mesa_nombre': mesaNombre,
+          'estado': 'abierta',
+          'fecha': DateTime.now().toIso8601String(),
+          'subtotal': subtotal,
+          'descuento_percent': 0,
+          'descuento': 0,
+          'total': subtotal,
+        }).select().single();
 
-      await Supabase.instance.client
-          .from('ventas')
-          .update({
-            'mesa': mesaNombre,
-            'total': total,
-            'estado': 'abierta',
-          })
-          .eq('id', ventaMesaId!);
+        ventaMesaId = _asString(venta['id']);
+        nombreMesaActual = mesaNombre;
+      } else {
+        await _sb.from('detalle_ventas').delete().eq('venta_id', ventaMesaId as Object);
+
+        await _sb.from('ventas').update({
+          'mesa': mesaNombre,
+          'mesa_nombre': mesaNombre,
+          'subtotal': subtotal,
+          'descuento_percent': 0,
+          'descuento': 0,
+          'total': subtotal,
+          'estado': 'abierta',
+        }).eq('id', ventaMesaId as Object);
+      }
+
+      for (final item in carrito) {
+        await _sb.from('detalle_ventas').insert({
+          'venta_id': ventaMesaId,
+          'base': item['base'],
+          'salsa': item['salsa'],
+          'proteina': item['proteina'],
+          'especialidad': item['especialidad'],
+          'huevo_tipo': item['huevoTipo'],
+          'toppings': item['toppings'],
+          'extras': item['extras'],
+          'precio': item['precio'],
+          'is_drink': item['isDrink'] == true,
+        });
+      }
+
+      await _cargarMesasAbiertas();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Guardado en "$nombreMesaActual"')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error guardando mesa: $e')),
+      );
     }
-
-    for (final item in carrito) {
-      await Supabase.instance.client.from('detalle_ventas').insert({
-        'venta_id': ventaMesaId,
-        'base': item['base'],
-        'salsa': item['salsa'],
-        'proteina': item['proteina'],
-        'especialidad': item['especialidad'],
-        'huevo_tipo': item['huevoTipo'],
-        'toppings': item['toppings'],
-        'extras': item['extras'],
-        'precio': item['precio'],
-        'is_drink': item['isDrink'] == true,
-      });
-    }
-
-    await _cargarMesasAbiertas();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Guardado en "$nombreMesaActual"')),
-    );
   }
 
   Future<void> _seleccionarMesaParaCargar() async {
     await _cargarMesasAbiertas();
-    final mesaIdElegida = await showDialog<int>(
+
+    final mesaIdElegida = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Mesas abiertas'),
@@ -242,12 +297,15 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                   shrinkWrap: true,
                   itemBuilder: (_, i) {
                     final m = mesasAbiertas[i];
+                    final t = _asDouble(m['total']);
+                    final nombre = _asString(m['mesa_nombre']) ?? _asString(m['mesa']) ?? '(Sin nombre)';
+                    final id = _asString(m['id']) ?? '';
                     return ListTile(
                       leading: const Icon(Icons.table_bar),
-                      title: Text(m['mesa'] ?? '(Sin nombre)'),
-                      subtitle: Text('Total parcial: \$${(m['total'] ?? 0).toStringAsFixed(2)}'),
+                      title: Text(nombre),
+                      subtitle: Text('Total parcial: \$${t.toStringAsFixed(2)}'),
                       trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.pop(context, m['id'] as int),
+                      onTap: () => Navigator.pop(context, id),
                     );
                   },
                   separatorBuilder: (_, __) => const Divider(height: 8),
@@ -260,79 +318,82 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
       ),
     );
 
-    if (mesaIdElegida != null) {
+    if (mesaIdElegida != null && mesaIdElegida.isNotEmpty) {
       await _cargarMesa(mesaIdElegida);
     }
   }
 
-  Future<void> _cargarMesa(int idVenta) async {
-    final venta = await Supabase.instance.client
-        .from('ventas')
-        .select('id, mesa, total, estado')
-        .eq('id', idVenta)
-        .maybeSingle();
+  Future<void> _cargarMesa(String idVenta) async {
+    try {
+      final venta = await _sb.from('ventas').select('id, mesa, mesa_nombre, total, estado').eq('id', idVenta).maybeSingle();
+      if (venta == null) return;
 
-    if (venta == null) return;
+      final detalles = await _sb.from('detalle_ventas').select().eq('venta_id', idVenta);
 
-    final detalles = await Supabase.instance.client
-        .from('detalle_ventas')
-        .select()
-        .eq('venta_id', idVenta);
+      ventaMesaId = _asString(venta['id']);
+      nombreMesaActual = _asString(venta['mesa_nombre']) ?? _asString(venta['mesa']) ?? 'Mesa';
 
-    ventaMesaId = venta['id'] as int;
-    nombreMesaActual = (venta['mesa'] as String?) ?? 'Mesa';
-
-    carrito
-      ..clear()
-      ..addAll(
-        List<Map<String, dynamic>>.from(detalles.map<Map<String, dynamic>>((d) {
-          return {
-            'base': d['base'],
-            'salsa': d['salsa'],
-            'proteina': d['proteina'],
-            'especialidad': d['especialidad'],
-            'huevoTipo': d['huevo_tipo'],
-            'toppings': (d['toppings'] as List?)?.cast<String>() ?? <String>[],
-            'extras': (d['extras'] is List)
-              ? List<Map<String, dynamic>>.from(
-                  (d['extras'] as List).map((e) {
-                    if (e is Map) return Map<String, dynamic>.from(e);
-                    return {'nombre': e.toString(), 'precio': 0};
-                  }),
-                )
-              : [],
-            'precio': (d['precio'] as num?)?.toDouble() ?? 0.0,
-            'isDrink': d['is_drink'] == true,
-          };
-        })),
-      );
-
-    calcularTotal();
-
-    setState(() {
-      baseSeleccionada = null;
-      salsaSeleccionada = null;
-      proteinaSeleccionada = null;
-      especialidadSeleccionada = null;
-      huevoTipo = null;
-      toppingsSeleccionados
+      carrito
         ..clear()
-        ..addAll(_toppings);
-      extrasSeleccionados.clear();
-    });
+        ..addAll(
+          List<Map<String, dynamic>>.from((detalles as List).map<Map<String, dynamic>>((d) {
+            final dm = Map<String, dynamic>.from(d as Map);
+            final toppings = (dm['toppings'] as List?)?.cast<String>() ?? <String>[];
+            final extrasRaw = dm['extras'];
+            final extras = (extrasRaw is List)
+                ? List<Map<String, dynamic>>.from(
+                    extrasRaw.map((e) {
+                      if (e is Map) return Map<String, dynamic>.from(e);
+                      return {'nombre': e.toString(), 'precio': 0};
+                    }),
+                  )
+                : <Map<String, dynamic>>[];
+            return {
+              'base': dm['base'],
+              'salsa': dm['salsa'],
+              'proteina': dm['proteina'],
+              'especialidad': dm['especialidad'],
+              'huevoTipo': dm['huevo_tipo'],
+              'toppings': toppings,
+              'extras': extras,
+              'precio': _asDouble(dm['precio']),
+              'isDrink': dm['is_drink'] == true,
+            };
+          })),
+        );
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Mesa "$nombreMesaActual" cargada')),
-    );
+      calcularTotal();
+
+      if (!mounted) return;
+      setState(() {
+        baseSeleccionada = null;
+        salsaSeleccionada = null;
+        proteinaSeleccionada = null;
+        especialidadSeleccionada = null;
+        huevoTipo = null;
+        toppingsSeleccionados
+          ..clear()
+          ..addAll(_toppings);
+        extrasSeleccionados.clear();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Mesa "$nombreMesaActual" cargada')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error cargando mesa: $e')),
+      );
+    }
   }
-
 
   void calcularTotal() {
     total = carrito.fold<double>(0, (sum, item) {
-      final p = (item['precio'] as num?)?.toDouble() ?? 0.0;
+      final p = _asDouble(item['precio']);
       return sum + p;
     });
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   double _calcularPrecioPedido({
@@ -344,9 +405,9 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     final recargo = _recargoProteina[proteina ?? 'Sin proteína'] ?? 0;
     double tot = basePrice + recargo;
     for (final e in extras) {
-      tot += (e['precio'] as num).toDouble();
+      tot += _asDouble(e['precio']);
     }
-    return tot;
+    return _round2(tot);
   }
 
   Future<void> _mostrarDialogoExtras() async {
@@ -465,6 +526,7 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
 
   Future<void> _editarItemDialog(int index) async {
     final item = Map<String, dynamic>.from(carrito[index]);
+
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -480,7 +542,9 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
         return Padding(
           padding: EdgeInsets.only(
             bottom: MediaQuery.of(context).viewInsets.bottom,
-            left: 16, right: 16, top: 16,
+            left: 16,
+            right: 16,
+            top: 16,
           ),
           child: StatefulBuilder(
             builder: (context, setStateDialog) {
@@ -625,7 +689,7 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                               },
                               label: const Text('Eliminar ítem'),
                               style: FilledButton.styleFrom(
-                                backgroundColor: Colors.red.shade700,
+                                backgroundColor: Colors.red,
                               ),
                             ),
                           ),
@@ -668,6 +732,9 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     );
   }
 
+  int _contarRefrescos() {
+    return carrito.where((e) => e['isDrink'] == true).length;
+  }
 
   Future<void> finalizarVenta() async {
     if (carrito.isEmpty || cajaAbierta == null) {
@@ -680,32 +747,61 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     final CobroResultado? cobro = await _dialogoCobro(totalInicial: total);
     if (cobro == null) return;
 
-    final user = Supabase.instance.client.auth.currentUser;
+    final user = _sb.auth.currentUser;
     if (user == null) return;
 
-    final sesionId = cajaAbierta!['id'];
-    dynamic venta;
+    final sesionId = _asString(cajaAbierta!['id']);
+    if (sesionId == null) return;
 
-    if (ventaMesaId == null) {
-      venta = await Supabase.instance.client.from('ventas').insert({
-        'auth_id': user.id,
-        'sesion_caja_id': sesionId,
-        'mesa': nombreMesaActual,
-        'estado': 'cerrada',
-        'fecha': DateTime.now().toIso8601String(),
-        'metodo_pago': cobro.metodoPago,
-        'descuento_percent': cobro.aplicarDescuento ? _descuentoPorcentajeFijo : 0,
-        'sodas': _contarRefrescos(),
-        'monto_recibido': cobro.montoRecibido,
-        'cambio': cobro.cambio,
-        'total': cobro.totalFinal,
-      }).select().single();
+    final subtotal = _round2(total);
+    final descuentoPercent = cobro.aplicarDescuento ? _descuentoPorcentajeFijo : 0.0;
+    final totalFinal = _round2(cobro.totalFinal);
+    final descuentoMonto = _round2(subtotal - totalFinal);
 
-      final ventaId = venta['id'];
+    try {
+      String ventaIdFinal;
+
+      if (ventaMesaId == null) {
+        final venta = await _sb.from('ventas').insert({
+          'auth_id': user.id,
+          'sesion_caja_id': sesionId,
+          'mesa': nombreMesaActual,
+          'mesa_nombre': nombreMesaActual,
+          'estado': 'cerrada',
+          'fecha': DateTime.now().toIso8601String(),
+          'metodo_pago': cobro.metodoPago,
+          'descuento_percent': descuentoPercent,
+          'descuento': descuentoMonto,
+          'subtotal': subtotal,
+          'sodas': _contarRefrescos(),
+          'monto_recibido': cobro.montoRecibido,
+          'cambio': cobro.cambio,
+          'total': totalFinal,
+        }).select().single();
+
+        ventaIdFinal = _asString(venta['id']) ?? '';
+      } else {
+        ventaIdFinal = ventaMesaId!;
+
+        await _sb.from('ventas').update({
+          'estado': 'cerrada',
+          'fecha': DateTime.now().toIso8601String(),
+          'metodo_pago': cobro.metodoPago,
+          'descuento_percent': descuentoPercent,
+          'descuento': descuentoMonto,
+          'subtotal': subtotal,
+          'sodas': _contarRefrescos(),
+          'monto_recibido': cobro.montoRecibido,
+          'cambio': cobro.cambio,
+          'total': totalFinal,
+        }).eq('id', ventaIdFinal);
+
+        await _sb.from('detalle_ventas').delete().eq('venta_id', ventaIdFinal);
+      }
 
       for (final item in carrito) {
-        await Supabase.instance.client.from('detalle_ventas').insert({
-          'venta_id': ventaId,
+        await _sb.from('detalle_ventas').insert({
+          'venta_id': ventaIdFinal,
           'base': item['base'],
           'salsa': item['salsa'],
           'proteina': item['proteina'],
@@ -717,67 +813,35 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
           'is_drink': item['isDrink'] == true,
         });
       }
-    } else {
-      await Supabase.instance.client
-          .from('ventas')
-          .update({
-            'estado': 'cerrada',
-            'fecha': DateTime.now().toIso8601String(),
-            'metodo_pago': cobro.metodoPago,
-            'descuento_percent': cobro.aplicarDescuento ? _descuentoPorcentajeFijo : 0,
-            'sodas': _contarRefrescos(),
-            'monto_recibido': cobro.montoRecibido,
-            'cambio': cobro.cambio,
-            'total': cobro.totalFinal,
-          })
-          .eq('id', ventaMesaId!);
 
-      await Supabase.instance.client
-          .from('detalle_ventas')
-          .delete()
-          .eq('venta_id', ventaMesaId!);
+      await _imprimirTickets(
+        metodoPago: cobro.metodoPago,
+        totalFinal: totalFinal,
+        descuento: descuentoPercent,
+        refrescosGratis: false,
+      );
 
-      for (final item in carrito) {
-        await Supabase.instance.client.from('detalle_ventas').insert({
-          'venta_id': ventaMesaId,
-          'base': item['base'],
-          'salsa': item['salsa'],
-          'proteina': item['proteina'],
-          'especialidad': item['especialidad'],
-          'huevo_tipo': item['huevoTipo'],
-          'toppings': item['toppings'],
-          'extras': item['extras'],
-          'precio': item['precio'],
-          'is_drink': item['isDrink'] == true,
-        });
-      }
+      await abrirCajon();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Venta realizada e impresa')),
+      );
+
+      setState(() {
+        carrito.clear();
+        total = 0;
+        ventaMesaId = null;
+        nombreMesaActual = null;
+      });
+
+      await _cargarMesasAbiertas();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error finalizando venta: $e')),
+      );
     }
-
-    await _imprimirTickets(
-      metodoPago: cobro.metodoPago,
-      totalFinal: cobro.totalFinal,
-      descuento: cobro.aplicarDescuento ? _descuentoPorcentajeFijo : 0,
-      refrescosGratis: false,
-    );
-
-    await abrirCajon();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Venta realizada e impresa')),
-    );
-
-    setState(() {
-      carrito.clear();
-      total = 0;
-      ventaMesaId = null;
-      nombreMesaActual = null;
-    });
-
-    await _cargarMesasAbiertas();
-  }
-
-  int _contarRefrescos() {
-    return carrito.where((e) => e['isDrink'] == true).length;
   }
 
   Future<void> _imprimirTickets({
@@ -787,29 +851,32 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     required bool refrescosGratis,
   }) async {
     final hora = DateTime.now();
-    final userEmail = Supabase.instance.client.auth.currentUser?.email ?? '-';
+    final userEmail = _sb.auth.currentUser?.email ?? '-';
 
     final ticketCliente = StringBuffer();
     ticketCliente.writeln('*** CHILASCAS ***');
     ticketCliente.writeln('--------------------------');
-    if (nombreMesaActual != null) ticketCliente.writeln('Mesa: $nombreMesaActual');
+    if (nombreMesaActual != null && nombreMesaActual!.trim().isNotEmpty) ticketCliente.writeln('Mesa: $nombreMesaActual');
     ticketCliente.writeln('Usuario: $userEmail');
     ticketCliente.writeln('Hora: ${hora.hour}:${hora.minute.toString().padLeft(2, '0')}');
     ticketCliente.writeln('Método de pago: $metodoPago');
     ticketCliente.writeln('--------------------------');
 
     for (final item in carrito) {
-      ticketCliente.writeln('${item['base']} ${item['especialidad'] ?? ''} ${item['proteina'] ?? ''}'
-          .replaceAll(RegExp(r'\s+'), ' ').trim());
+      ticketCliente.writeln(
+        '${item['base']} ${item['especialidad'] ?? ''} ${item['proteina'] ?? ''}'.replaceAll(RegExp(r'\s+'), ' ').trim(),
+      );
       if (item['huevoTipo'] != null) ticketCliente.writeln('  Huevo: ${item['huevoTipo']}');
       if (item['salsa'] != null && item['salsa'] != 'Sin salsa') {
         ticketCliente.writeln('  Salsa: ${item['salsa']}');
       }
-      final tops = (item['toppings'] as List?)?.cast<String>() ?? [];
+      final tops = (item['toppings'] as List?)?.cast<String>() ?? <String>[];
       if (tops.isNotEmpty) ticketCliente.writeln('  Toppings: ${tops.join(", ")}');
       final ex = (item['extras'] as List?) ?? [];
-      if (ex.isNotEmpty) ticketCliente.writeln('  Extras: ${ex.map((e) => e['nombre']).join(", ")}');
-      ticketCliente.writeln('  \$${(item['precio'] as num).toStringAsFixed(2)}');
+      if (ex.isNotEmpty) {
+        ticketCliente.writeln('  Extras: ${ex.map((e) => (e is Map ? e['nombre'] : e.toString())).join(", ")}');
+      }
+      ticketCliente.writeln('  \$${_asDouble(item['precio']).toStringAsFixed(2)}');
       ticketCliente.writeln('--------------------------');
     }
 
@@ -822,7 +889,7 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     final ticketCocina = StringBuffer();
     ticketCocina.writeln('*** CHILASCAS - COCINA ***');
     ticketCocina.writeln('--------------------------');
-    if (nombreMesaActual != null) ticketCocina.writeln('Mesa: $nombreMesaActual');
+    if (nombreMesaActual != null && nombreMesaActual!.trim().isNotEmpty) ticketCocina.writeln('Mesa: $nombreMesaActual');
     ticketCocina.writeln('Hora: ${hora.hour}:${hora.minute.toString().padLeft(2, '0')}');
     ticketCocina.writeln('--------------------------');
 
@@ -838,10 +905,12 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
       if (item['salsa'] != null && item['salsa'] != 'Sin salsa') {
         ticketCocina.writeln('  - Salsa: ${item['salsa']}');
       }
-      final tops = (item['toppings'] as List?)?.cast<String>() ?? [];
+      final tops = (item['toppings'] as List?)?.cast<String>() ?? <String>[];
       if (tops.isNotEmpty) ticketCocina.writeln('  - Toppings: ${tops.join(", ")}');
       final ex = (item['extras'] as List?) ?? [];
-      if (ex.isNotEmpty) ticketCocina.writeln('  - Extras: ${ex.map((e) => e['nombre']).join(", ")}');
+      if (ex.isNotEmpty) {
+        ticketCocina.writeln('  - Extras: ${ex.map((e) => (e is Map ? e['nombre'] : e.toString())).join(", ")}');
+      }
       ticketCocina.writeln('--------------------------');
     }
 
@@ -851,13 +920,12 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     final clienteOk = await imprimirTicket(ticketCliente.toString(), tipo: 'cliente');
     final cocinaOk = await imprimirTicket(ticketCocina.toString(), tipo: 'cocina');
 
-    if (!(clienteOk && cocinaOk)) {
+    if (!(clienteOk && cocinaOk) && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error al imprimir ${!clienteOk ? "cliente" : "cocina"}')),
       );
     }
   }
-
 
   Future<CobroResultado?> _dialogoCobro({required double totalInicial}) async {
     bool aplicarDescuento = false;
@@ -866,9 +934,8 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     double totalConDescuento = totalInicial;
 
     double calcularTotal() {
-      totalConDescuento = aplicarDescuento
-          ? totalInicial * (1 - _descuentoPorcentajeFijo / 100)
-          : totalInicial;
+      totalConDescuento = aplicarDescuento ? totalInicial * (1 - _descuentoPorcentajeFijo / 100) : totalInicial;
+      totalConDescuento = _round2(totalConDescuento);
       return totalConDescuento;
     }
 
@@ -881,7 +948,7 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
           builder: (context, setStateDialog) {
             final t = calcularTotal();
             final recibido = double.tryParse(ctrlRecibido.text.replaceAll(',', '.')) ?? 0.0;
-            cambio = (metodoPago == 'efectivo') ? (recibido - t) : 0.0;
+            cambio = (metodoPago == 'efectivo') ? _round2(recibido - t) : 0.0;
 
             return AlertDialog(
               title: const Text('Cobro'),
@@ -914,9 +981,7 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                   const SizedBox(height: 6),
                   Wrap(
                     spacing: 8,
-                    children: [
-                      'efectivo', 'tarjeta', 'transferencia'
-                    ].map((m) {
+                    children: ['efectivo', 'tarjeta', 'transferencia'].map((m) {
                       final sel = m == metodoPago;
                       return ChoiceChip(
                         label: Text(m[0].toUpperCase() + m.substring(1)),
@@ -963,14 +1028,14 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                         );
                         return;
                       }
-                      cambio = recibido - totalConDescuento;
+                      final c = _round2(recibido - totalConDescuento);
                       Navigator.pop(
                         context,
                         CobroResultado(
                           aplicarDescuento: aplicarDescuento,
                           metodoPago: metodoPago,
-                          montoRecibido: recibido,
-                          cambio: cambio < 0 ? 0 : cambio,
+                          montoRecibido: _round2(recibido),
+                          cambio: c < 0 ? 0 : c,
                           totalFinal: totalConDescuento,
                         ),
                       );
@@ -997,7 +1062,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     );
   }
 
-
   Future<void> mostrarDialogoAbrirCaja() async {
     final controller = TextEditingController();
 
@@ -1007,7 +1071,7 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
         title: const Text('Abrir caja'),
         content: TextField(
           controller: controller,
-          keyboardType: TextInputType.number,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: const InputDecoration(labelText: 'Monto inicial'),
         ),
         actions: [
@@ -1017,8 +1081,8 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
             onPressed: () {
               final monto = double.tryParse(controller.text.replaceAll(',', '.'));
               if (monto != null) {
-                abrirCaja(monto);
                 Navigator.pop(context);
+                abrirCaja(monto);
               }
             },
             label: const Text('Abrir'),
@@ -1029,230 +1093,279 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
   }
 
   Future<void> _mostrarMesasDialogo() async {
-  final mesas = await Supabase.instance.client
-      .from('ventas')
-      .select('id, mesa_id, mesa_nombre, cliente_nombre, total, estado')
-      .eq('estado', 'abierta')
-      .order('created_at');
+    try {
+      final sesionId = _asString(cajaAbierta?['id']);
+      if (sesionId == null) return;
 
-  await showDialog(
-    context: context,
-    builder: (_) => AlertDialog(
-      title: const Text('Gestión de mesas'),
-      content: SizedBox(
-        width: 400,
-        child: mesas.isEmpty
-            ? const Text('No hay mesas abiertas actualmente.')
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                children: mesas.map<Widget>((m) {
-                  return ListTile(
-                    leading: const Icon(Icons.table_bar),
-                    title: Text('Mesa: ${m['mesa_nombre'] ?? '(sin nombre)'}'),
-                    subtitle: Text('Cliente: ${m['cliente_nombre'] ?? '-'}'),
-                    trailing: Text('\$${(m['total'] ?? 0).toString()}'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _cargarMesa(m['id']);
+      final mesas = await _sb
+          .from('ventas')
+          .select('id, mesa, mesa_nombre, cliente_nombre, total, estado, created_at')
+          .eq('sesion_caja_id', sesionId)
+          .eq('estado', 'abierta')
+          .order('created_at');
+
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Gestión de mesas'),
+          content: SizedBox(
+            width: 420,
+            child: (mesas as List).isEmpty
+                ? const Text('No hay mesas abiertas actualmente.')
+                : ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: (mesas).length,
+                    separatorBuilder: (_, __) => const Divider(height: 8),
+                    itemBuilder: (_, i) {
+                      final m = Map<String, dynamic>.from(mesas[i] as Map);
+                      final id = _asString(m['id']) ?? '';
+                      final nombre = _asString(m['mesa_nombre']) ?? _asString(m['mesa']) ?? '(sin nombre)';
+                      final cliente = _asString(m['cliente_nombre']) ?? '-';
+                      final t = _asDouble(m['total']);
+                      return ListTile(
+                        leading: const Icon(Icons.table_bar),
+                        title: Text('Mesa: $nombre'),
+                        subtitle: Text('Cliente: $cliente'),
+                        trailing: Text('\$${t.toStringAsFixed(2)}'),
+                        onTap: () {
+                          Navigator.pop(context);
+                          if (id.isNotEmpty) _cargarMesa(id);
+                        },
+                      );
                     },
-                  );
-                }).toList(),
-              ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () {
-            Navigator.pop(context);
-            _mostrarDialogoNuevaMesa();
-          },
-          child: const Text('➕ Agregar nueva mesa'),
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _mostrarDialogoNuevaMesa();
+              },
+              child: const Text('➕ Agregar nueva mesa'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cerrar'),
+            ),
+          ],
         ),
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cerrar'),
-        ),
-      ],
-    ),
-  );
-}
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error abriendo gestión de mesas: $e')),
+      );
+    }
+  }
 
   Future<void> _mostrarDialogoNuevaMesa() async {
-  final nombreMesaCtrl = TextEditingController();
-  final nombreClienteCtrl = TextEditingController();
-
-  await showDialog(
-    context: context,
-    builder: (_) => AlertDialog(
-      title: const Text('Nueva mesa'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: nombreMesaCtrl,
-            decoration: const InputDecoration(labelText: 'Nombre de la mesa (opcional)'),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: nombreClienteCtrl,
-            decoration: const InputDecoration(labelText: 'Nombre del cliente (opcional)'),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancelar'),
-        ),
-        FilledButton.icon(
-          icon: const Icon(Icons.add),
-          label: const Text('Crear mesa'),
-          onPressed: () async {
-            final user = Supabase.instance.client.auth.currentUser;
-            if (user == null) return;
-
-            final nueva = await Supabase.instance.client
-                .from('ventas')
-                .insert({
-                  'auth_id': user.id,
-                  'sesion_caja_id': cajaAbierta!['id'],
-                  'estado': 'abierta',
-                  'mesa_nombre': nombreMesaCtrl.text.isNotEmpty
-                      ? nombreMesaCtrl.text
-                      : 'Mesa ${DateTime.now().millisecondsSinceEpoch % 1000}',
-                  'cliente_nombre': nombreClienteCtrl.text,
-                  'total': 0,
-                })
-                .select()
-                .single();
-
-            if (context.mounted) Navigator.pop(context);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Mesa creada: ${nueva['mesa_nombre']}')),
-            );
-
-            await _cargarMesa(nueva['id']);
-          },
-        ),
-      ],
-    ),
-  );
-}
-
-
-
-  Future<void> mostrarDialogoCerrarCaja() async {
-    if (cajaAbierta == null) return;
-
-    final user = Supabase.instance.client.auth.currentUser;
-    final userId = user?.id;
-    if (userId == null) return;
-
-    final sesionId = cajaAbierta!['id'];
-    final montoInicial = (cajaAbierta!['monto_inicial'] as num?)?.toDouble() ?? 0;
-    final apertura = DateTime.tryParse(cajaAbierta!['fecha_apertura']?.toString() ?? '') ?? DateTime.now();
-
-    final ventas = await Supabase.instance.client
-        .from('ventas')
-        .select('id, total, metodo_pago')
-        .eq('sesion_caja_id', sesionId)
-        .eq('estado', 'cerrada');
-
-    double totalVentas = 0;
-    int totalTickets = ventas.length;
-    final Map<String, double> totalesPorMetodo = {};
-
-    for (final v in ventas) {
-      final t = (v['total'] as num?)?.toDouble() ?? 0;
-      final m = (v['metodo_pago'] ?? 'efectivo') as String;
-      totalVentas += t;
-      totalesPorMetodo[m] = (totalesPorMetodo[m] ?? 0) + t;
-    }
-
-    final montoFinal = montoInicial + totalVentas;
-    final cierre = DateTime.now();
-    final promedio = totalTickets > 0 ? totalVentas / totalTickets : 0;
+    final nombreMesaCtrl = TextEditingController();
+    final nombreClienteCtrl = TextEditingController();
 
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Resumen de caja'),
+        title: const Text('Nueva mesa'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _kv('Apertura', '${apertura.toLocal()}'),
-            _kv('Cierre', '${cierre.toLocal()}'),
-            _kv('Usuario', user?.email ?? '-'),
-            const Divider(),
-            _kv('Monto inicial', '\$${montoInicial.toStringAsFixed(2)}'),
-            _kv('Total ventas', '\$${totalVentas.toStringAsFixed(2)}'),
-            _kv('Monto final', '\$${montoFinal.toStringAsFixed(2)}', valueStyle: const TextStyle(fontWeight: FontWeight.bold)),
-            _kv('Tickets', '$totalTickets'),
-            _kv('Promedio venta', '\$${promedio.toStringAsFixed(2)}'),
-            const Divider(),
-            const Text('Por método de pago:', style: TextStyle(fontWeight: FontWeight.w600)),
-            for (final e in totalesPorMetodo.entries) _kv(' - ${e.key}', '\$${e.value.toStringAsFixed(2)}'),
-            const SizedBox(height: 12),
-            const Text('¿Deseas cerrar la caja e imprimir el resumen?'),
+            TextField(
+              controller: nombreMesaCtrl,
+              decoration: const InputDecoration(labelText: 'Nombre de la mesa (opcional)'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: nombreClienteCtrl,
+              decoration: const InputDecoration(labelText: 'Nombre del cliente (opcional)'),
+            ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
           FilledButton.icon(
-            icon: const Icon(Icons.lock_outline),
+            icon: const Icon(Icons.add),
+            label: const Text('Crear mesa'),
             onPressed: () async {
-              await Supabase.instance.client
-                  .from('sesiones_caja')
-                  .update({
-                    'estado': 'cerrada',
-                    'fecha_cierre': cierre.toIso8601String(),
-                  })
-                  .eq('id', sesionId);
+              try {
+                final user = _sb.auth.currentUser;
+                if (user == null) return;
 
-              final resumen = StringBuffer();
-              resumen.writeln('*** RESUMEN DEL DÍA ***');
-              resumen.writeln('--------------------------');
-              resumen.writeln('Usuario: ${user?.email ?? '-'}');
-              resumen.writeln('Fecha: ${cierre.day}/${cierre.month}/${cierre.year}');
-              resumen.writeln('Apertura: ${apertura.hour}:${apertura.minute.toString().padLeft(2, '0')}');
-              resumen.writeln('Cierre:   ${cierre.hour}:${cierre.minute.toString().padLeft(2, '0')}');
-              resumen.writeln('--------------------------');
-              resumen.writeln('Monto inicial: \$${montoInicial.toStringAsFixed(2)}');
-              resumen.writeln('Total ventas:  \$${totalVentas.toStringAsFixed(2)}');
-              resumen.writeln('Monto final:   \$${montoFinal.toStringAsFixed(2)}');
-              resumen.writeln('Tickets: $totalTickets');
-              resumen.writeln('Promedio venta: \$${promedio.toStringAsFixed(2)}');
-              resumen.writeln('--------------------------');
-              resumen.writeln('Por método de pago:');
-              for (final e in totalesPorMetodo.entries) {
-                resumen.writeln(' - ${e.key}: \$${e.value.toStringAsFixed(2)}');
+                final sesionId = _asString(cajaAbierta?['id']);
+                if (sesionId == null) return;
+
+                final mesaNombre = nombreMesaCtrl.text.trim().isNotEmpty
+                    ? nombreMesaCtrl.text.trim()
+                    : 'Mesa ${(DateTime.now().millisecondsSinceEpoch % 1000).toString().padLeft(3, '0')}';
+
+                final nueva = await _sb.from('ventas').insert({
+                  'auth_id': user.id,
+                  'sesion_caja_id': sesionId,
+                  'estado': 'abierta',
+                  'mesa': mesaNombre,
+                  'mesa_nombre': mesaNombre,
+                  'cliente_nombre': nombreClienteCtrl.text.trim(),
+                  'subtotal': 0,
+                  'descuento_percent': 0,
+                  'descuento': 0,
+                  'total': 0,
+                  'fecha': DateTime.now().toIso8601String(),
+                }).select().single();
+
+                if (mounted) Navigator.pop(context);
+
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Mesa creada: ${_asString(nueva['mesa_nombre']) ?? mesaNombre}')),
+                );
+
+                final id = _asString(nueva['id']);
+                if (id != null && id.isNotEmpty) {
+                  await _cargarMesa(id);
+                }
+              } catch (e) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error creando mesa: $e')),
+                );
               }
-              resumen.writeln('--------------------------');
-              resumen.writeln('Fin del turno ✔️');
-              resumen.writeln('\n\n\n');
-
-              await imprimirTicket(resumen.toString(), tipo: 'cliente');
-
-              setState(() {
-                cajaAbierta = null;
-                carrito.clear();
-                total = 0;
-                ventaMesaId = null;
-                nombreMesaActual = null;
-              });
-
-              if (context.mounted) Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Caja cerrada e impresa correctamente')),
-              );
             },
-            label: const Text('Cerrar e imprimir'),
           ),
         ],
       ),
     );
   }
 
+  Future<void> mostrarDialogoCerrarCaja() async {
+    if (cajaAbierta == null) return;
+
+    try {
+      final user = _sb.auth.currentUser;
+      final sesionId = _asString(cajaAbierta!['id']);
+      if (user == null || sesionId == null) return;
+
+      final montoInicial = _asDouble(cajaAbierta!['monto_inicial']);
+      final apertura = DateTime.tryParse(_asString(cajaAbierta!['fecha_apertura']) ?? '') ?? DateTime.now();
+
+      final ventas = await _sb
+          .from('ventas')
+          .select('id, total, metodo_pago')
+          .eq('sesion_caja_id', sesionId)
+          .eq('estado', 'cerrada');
+
+      double totalVentas = 0;
+      final Map<String, double> totalesPorMetodo = {};
+      final list = (ventas as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+      for (final v in list) {
+        final t = _asDouble(v['total']);
+        final m = _asString(v['metodo_pago']) ?? 'efectivo';
+        totalVentas += t;
+        totalesPorMetodo[m] = _round2((totalesPorMetodo[m] ?? 0) + t);
+      }
+
+      totalVentas = _round2(totalVentas);
+      final totalTickets = list.length;
+      final montoFinal = _round2(montoInicial + totalVentas);
+      final cierre = DateTime.now();
+      final promedio = totalTickets > 0 ? _round2(totalVentas / totalTickets) : 0.0;
+
+      await showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Resumen de caja'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _kv('Apertura', '${apertura.toLocal()}'),
+              _kv('Cierre', '${cierre.toLocal()}'),
+              _kv('Usuario', user.email ?? '-'),
+              const Divider(),
+              _kv('Monto inicial', '\$${montoInicial.toStringAsFixed(2)}'),
+              _kv('Total ventas', '\$${totalVentas.toStringAsFixed(2)}'),
+              _kv('Monto final', '\$${montoFinal.toStringAsFixed(2)}',
+                  valueStyle: const TextStyle(fontWeight: FontWeight.bold)),
+              _kv('Tickets', '$totalTickets'),
+              _kv('Promedio venta', '\$${promedio.toStringAsFixed(2)}'),
+              const Divider(),
+              const Text('Por método de pago:', style: TextStyle(fontWeight: FontWeight.w600)),
+              for (final e in totalesPorMetodo.entries) _kv(' - ${e.key}', '\$${e.value.toStringAsFixed(2)}'),
+              const SizedBox(height: 12),
+              const Text('¿Deseas cerrar la caja e imprimir el resumen?'),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
+            FilledButton.icon(
+              icon: const Icon(Icons.lock_outline),
+              onPressed: () async {
+                try {
+                  await _sb.from('sesiones_caja').update({
+                    'estado': 'cerrada',
+                    'fecha_cierre': cierre.toIso8601String(),
+                    'monto_final': montoFinal,
+                  }).eq('id', sesionId);
+
+                  final resumen = StringBuffer();
+                  resumen.writeln('*** RESUMEN DEL DÍA ***');
+                  resumen.writeln('--------------------------');
+                  resumen.writeln('Usuario: ${user.email ?? '-'}');
+                  resumen.writeln('Fecha: ${cierre.day}/${cierre.month}/${cierre.year}');
+                  resumen.writeln('Apertura: ${apertura.hour}:${apertura.minute.toString().padLeft(2, '0')}');
+                  resumen.writeln('Cierre:   ${cierre.hour}:${cierre.minute.toString().padLeft(2, '0')}');
+                  resumen.writeln('--------------------------');
+                  resumen.writeln('Monto inicial: \$${montoInicial.toStringAsFixed(2)}');
+                  resumen.writeln('Total ventas:  \$${totalVentas.toStringAsFixed(2)}');
+                  resumen.writeln('Monto final:   \$${montoFinal.toStringAsFixed(2)}');
+                  resumen.writeln('Tickets: $totalTickets');
+                  resumen.writeln('Promedio venta: \$${promedio.toStringAsFixed(2)}');
+                  resumen.writeln('--------------------------');
+                  resumen.writeln('Por método de pago:');
+                  for (final e in totalesPorMetodo.entries) {
+                    resumen.writeln(' - ${e.key}: \$${e.value.toStringAsFixed(2)}');
+                  }
+                  resumen.writeln('--------------------------');
+                  resumen.writeln('Fin del turno ✔️');
+                  resumen.writeln('\n\n\n');
+
+                  await imprimirTicket(resumen.toString(), tipo: 'cliente');
+
+                  if (!mounted) return;
+                  setState(() {
+                    cajaAbierta = null;
+                    carrito.clear();
+                    total = 0;
+                    ventaMesaId = null;
+                    nombreMesaActual = null;
+                    mesasAbiertas.clear();
+                  });
+
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Caja cerrada e impresa correctamente')),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error cerrando caja: $e')),
+                  );
+                }
+              },
+              label: const Text('Cerrar e imprimir'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error preparando cierre de caja: $e')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1357,7 +1470,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                         icon: Icons.restaurant,
                       ),
                       const SizedBox(height: 12),
-
                       _SectionCard(
                         title: 'Base',
                         subtitle: 'Obligatorio',
@@ -1369,7 +1481,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                             proteinaSeleccionada = null;
                             huevoTipo = null;
                             especialidadSeleccionada = null;
-
                             if (v == 'Vegetariano') {
                               toppingsSeleccionados
                                 ..clear()
@@ -1379,7 +1490,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                         ),
                       ),
                       const SizedBox(height: 12),
-
                       _SectionCard(
                         title: 'Salsa',
                         subtitle: 'Opcional',
@@ -1390,7 +1500,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                         ),
                       ),
                       const SizedBox(height: 12),
-
                       if (baseSeleccionada != 'Especialidad' && baseSeleccionada != 'Vegetariano')
                         _SectionCard(
                           title: 'Proteína',
@@ -1409,7 +1518,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                             ),
                           ),
                         ),
-
                       if (proteinaSeleccionada == "Huevo")
                         _SectionCard(
                           title: "Tipo de huevo",
@@ -1420,7 +1528,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                             onSelected: (v) => setState(() => huevoTipo = v),
                           ),
                         ),
-
                       if (baseSeleccionada == 'Especialidad')
                         _SectionCard(
                           title: 'Especialidad',
@@ -1431,9 +1538,7 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                             onSelected: (v) => setState(() => especialidadSeleccionada = v),
                           ),
                         ),
-
                       const SizedBox(height: 12),
-
                       _SectionCard(
                         title: '¿Con todo?',
                         subtitle: 'Toppings preseleccionados (quita los que NO desee)',
@@ -1458,7 +1563,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                           }).toList(),
                         ),
                       ),
-
                       const SizedBox(height: 16),
                       Row(
                         children: [
@@ -1482,18 +1586,14 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 20),
-
                       Row(
                         children: [
                           Expanded(
                             child: OutlinedButton.icon(
                               icon: const Icon(Icons.table_bar),
                               onPressed: _crearOModificarMesaDialog,
-                              label: Text(ventaMesaId == null
-                                  ? 'Guardar en mesa abierta'
-                                  : 'Actualizar mesa abierta'),
+                              label: Text(ventaMesaId == null ? 'Guardar en mesa abierta' : 'Actualizar mesa abierta'),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -1504,7 +1604,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 24),
                       if (!isWide)
                         _CarritoPanel(
@@ -1524,7 +1623,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
                   ),
                 ),
               ),
-
               if (isWide)
                 Expanded(
                   flex: 2,
@@ -1591,7 +1689,6 @@ class _RealizarVentaViewState extends State<RealizarVentaView> {
     );
   }
 }
-
 
 class _SectionCard extends StatelessWidget {
   final String title;
@@ -1678,6 +1775,12 @@ class _CarritoPanel extends StatelessWidget {
     required this.etiquetaMesa,
   });
 
+  double _asDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0.0;
+  }
+
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -1727,6 +1830,7 @@ class _CarritoPanel extends StatelessWidget {
                     final item = carrito[i];
                     final toppings = (item['toppings'] as List?)?.cast<String>() ?? [];
                     final isDrink = item['isDrink'] == true;
+                    final extras = (item['extras'] as List?) ?? [];
                     return Card(
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       child: ListTile(
@@ -1739,7 +1843,7 @@ class _CarritoPanel extends StatelessWidget {
                           ),
                         ),
                         title: Text(
-                          '${item['base']} — \$${(item['precio'] as num).toStringAsFixed(2)}',
+                          '${item['base']} — \$${_asDouble(item['precio']).toStringAsFixed(2)}',
                           style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                         subtitle: isDrink
@@ -1752,7 +1856,7 @@ class _CarritoPanel extends StatelessWidget {
                                   if (item['huevoTipo'] != null) 'Huevo: ${item['huevoTipo']}',
                                   if (item['especialidad'] != null) 'Especialidad: ${item['especialidad']}',
                                   'Toppings: ${toppings.isEmpty ? '-' : toppings.join(', ')}',
-                                  'Extras: ${(item['extras'] as List).isEmpty ? '-' : (item['extras'] as List).map((e) => e['nombre']).join(', ')}',
+                                  'Extras: ${extras.isEmpty ? '-' : extras.map((e) => (e is Map ? e['nombre'] : e.toString())).join(', ')}',
                                 ].join('\n')),
                               ),
                         trailing: Wrap(
@@ -1817,7 +1921,6 @@ class _CarritoPanel extends StatelessWidget {
     );
   }
 }
-
 
 class CobroResultado {
   final bool aplicarDescuento;

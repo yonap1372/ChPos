@@ -1,9 +1,13 @@
-import 'package:chilascas_pos/views/realizar_venta_view.dart';
 import 'package:flutter/material.dart';
-import 'login_page.dart';
-import 'package:chilascas_pos/views/editar_menu_view.dart';
-import 'package:chilascas_pos/views/asignar_impresoras_view.dart';
-
+//port 'package:chilascas_pos/views/home/home_page.dart';
+import 'package:chilascas_pos/views/ventas/realizar_venta_view.dart';
+import 'package:chilascas_pos/views/estados/estados_view.dart';
+import 'package:chilascas_pos/views/caja/caja_view.dart';
+import 'package:chilascas_pos/views/usuarios/usuarios_view.dart';
+import 'package:chilascas_pos/views/configuracion/configuracion_view.dart';
+import 'package:chilascas_pos/views/impresoras/asignar_impresoras_view.dart';
+import 'package:chilascas_pos/views/menu/editar_menu_view.dart';
+import 'package:chilascas_pos/views/auth/login_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -84,74 +88,58 @@ class _MenuLateral extends StatelessWidget {
             ),
           ),
           _buildMenuItem(
+            icon: Icons.home,
+            title: 'Inicio',
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(builder: (_) => const HomePage()),
+              );
+            },
+          ),
+          _buildMenuItem(
             icon: Icons.point_of_sale,
             title: 'Realizar venta',
-            onTap: () {
-              Navigator.push(context, MaterialPageRoute(
-                builder: (_) => const RealizarVentaView(),
-              ));
-            },
-          ),
-          _buildMenuItem(
-            icon: Icons.history,
-            title: 'Historial de ventas',
-            onTap: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Ir a Historial de ventas (pendiente)')),
-              );
-            },
-          ),
-          _buildMenuItem(
-            icon: Icons.kitchen,
-            title: 'Cocina',
-            onTap: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Ir a Cocina (pendiente)')),
-              );
-            },
-          ),
-          _buildMenuItem(
-            icon: Icons.attach_money,
-            title: 'Caja',
-            onTap: () {
-              Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Ir a Caja (pendiente)')),
-              );
-            },
-          ),
-          const Divider(color: Colors.grey),
-
-          _buildMenuItem(
-            icon: Icons.restaurant,
-            title: 'Editar menú',
             onTap: () {
               Navigator.pop(context);
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const EditarMenuView()),
+                MaterialPageRoute(builder: (_) => const RealizarVentaView()),
               );
             },
           ),
           _buildMenuItem(
-            icon: Icons.category,
-            title: 'Categorías',
+            icon: Icons.query_stats,
+            title: 'Estados',
             onTap: () {
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Ir a Categorías (pendiente)')),
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const EstadosView()),
               );
             },
           ),
+          _buildMenuItem(
+            icon: Icons.payments,
+            title: 'Caja',
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CajaView()),
+              );
+            },
+          ),
+          const Divider(color: Colors.grey),
           _buildMenuItem(
             icon: Icons.people,
             title: 'Usuarios',
             onTap: () {
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Ir a Usuarios (pendiente)')),
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const UsuariosView()),
               );
             },
           ),
@@ -160,8 +148,9 @@ class _MenuLateral extends StatelessWidget {
             title: 'Configuración',
             onTap: () {
               Navigator.pop(context);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Ir a Configuración (pendiente)')),
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ConfiguracionView()),
               );
             },
           ),
@@ -172,9 +161,18 @@ class _MenuLateral extends StatelessWidget {
               Navigator.pop(context);
               Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (_) => const AsignarImpresorasView(),
-                ),
+                MaterialPageRoute(builder: (_) => const AsignarImpresorasView()),
+              );
+            },
+          ),
+          _buildMenuItem(
+            icon: Icons.restaurant,
+            title: 'Editar menú',
+            onTap: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const EditarMenuView()),
               );
             },
           ),
@@ -186,7 +184,7 @@ class _MenuLateral extends StatelessWidget {
             onTap: () {
               Navigator.pushReplacement(
                 context,
-                MaterialPageRoute(builder: (context) => const LoginPage()),
+                MaterialPageRoute(builder: (_) => const LoginPage()),
               );
             },
           ),
